@@ -27,3 +27,4 @@ func main() {
     fmt.Println("Server started on port 4444")
     http.HandleFunc("/", handler)
     log.Fatal(http.ListenAndServe(":4444", nil))
+}
