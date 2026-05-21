@@ -41,4 +41,4 @@ By default, the Go toolchain dynamically links to the host machine's `glibc` pro
 ---
 
 ## Underlying Lesson
-Go binaries dynamically link to glibc by default, and glibc is forward- but not backward-compatible across versions.
+Go binaries dynamically link to glibc by default, and glibc is forward- but not backward-compatible across versions. 
