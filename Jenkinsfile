@@ -17,7 +17,11 @@ pipeline {
                 keyFileVariable: 'SSH_KEY',
                 usernameVariable: 'SSH_USER'
             )]) {
-                sh 'scp -i -o StrictHostKeyChecking=no $SSH_KEY main $SSH_USER@target:~'
+                sh """
+                mkdir -p ~/.ssh
+                ssh-keyscan -H target >> ~/.ssh/known_hosts
+                scp -i $SSH_KEY main $SSH_USER@target:~
+                """
             }
             
         }
