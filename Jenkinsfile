@@ -17,7 +17,7 @@ pipeline {
                 keyFileVariable: 'SSH_KEY',
                 usernameVariable: 'laborant'
             )]) {
-                sh 'scp -o StrictHostKeyChecking=no -i $SSH_KEY main $SSH_USER@target:~'
+                sh 'scp -o StrictHostKeyChecking=no -i $SSH_KEY main laborant@target:~'
             }
             
         }
