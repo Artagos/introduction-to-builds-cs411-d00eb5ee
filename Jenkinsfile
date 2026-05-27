@@ -15,7 +15,7 @@ pipeline {
             withCredentials([sshUserPrivateKey(
                 credentialsId: 'target-ssh',
                 keyFileVariable: 'SSH_KEY',
-                usernameVariable: 'SSH_USER'
+                usernameVariable: 'laborant'
             )]) {
                 sh 'scp -o StrictHostKeyChecking=no -i $SSH_KEY main $SSH_USER@target:~'
             }
