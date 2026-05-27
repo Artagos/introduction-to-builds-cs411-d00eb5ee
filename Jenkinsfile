@@ -17,7 +17,14 @@ pipeline {
                 keyFileVariable: 'SSH_KEY',
                 usernameVariable: 'laborant'
             )]) {
-                sh 'scp -o StrictHostKeyChecking=no -i $SSH_KEY main laborant@target:~'
+                sh '''
+                # 1. Trust the target host
+                mkdir -p ~/.ssh
+                ssh-keyscan -H target >> ~/.ssh/known_hosts
+
+                # 2. $SSH_KEY points to the temporary file path automatically
+                scp -i "$SSH_KEY" main laborant@target:~
+            ''' 
             }
             
         }
