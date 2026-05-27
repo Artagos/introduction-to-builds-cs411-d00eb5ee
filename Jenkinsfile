@@ -11,4 +11,15 @@ pipeline {
             }
         }
     }
+    stage('Deploy') {
+        steps {
+            withCredentials([sshUserPrivateKey(
+                credentialsId: 'target-ssh',
+                keyFileVariable: 'SSH_KEY',
+                usernameVariable: 'SSH_USER'
+            )]) {
+                sh 'scp -i $SSH_KEY main $SSH_USER@target:~'
+            }
+        }
+    }
 }
