@@ -10,7 +10,6 @@ pipeline {
                 sh "go build main.go"
             }
         }
-    }
     stage('Deploy') {
         steps {
             withCredentials([sshUserPrivateKey(
@@ -21,5 +20,6 @@ pipeline {
                 sh 'scp -i $SSH_KEY main $SSH_USER@target:~'
             }
         }
+    }
     }
 }
