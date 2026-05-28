@@ -1,44 +1,90 @@
-# Debugging GLIBC Version Mismatch
 
-## Hypotheses
 
-1. **Hypothesis 1 (Most Likely): Glibc backward-incompatibility.**
-   * **Reason:** The Jenkins build machine is running a modern Linux distribution featuring a newer version of `glibc` (specifically version 2.34 or higher), whereas the customer's older Ubuntu 18.04 VM only supplies `glibc` up to version 2.27. Because `glibc` guarantees forward-compatibility but explicitly lacks backward-compatibility for newer symbols, the binary fails to execute on the older system.
-2. **Hypothesis 2 (Less Likely): Rogue CGO dependency.**
-   * **Reason:** Even if the Go code itself doesn't explicitly import `"C"`, a native Go package in the dependency tree (such as `net` or `os/user`) might have automatically triggered CGO to fall back on host system libraries during the standard `go build` execution.
+## 1. Hypotheses
 
----
+1. **The pipeline launches `./main` as a child of the SSH session (highest likelihood).**
+   The process is spawned without detaching from the controlling terminal, so when the SSH session closes, SIGHUP is delivered to the process group and `./main` exits.
 
-## Verification Steps
-
-### Verification for Hypothesis 1
-Run the following command on the **customer's Ubuntu 18.04 VM** to check the native version of `glibc` available on their system:
-```bash
-ldd --version
-```
-
-* What the output tells me: If the output prints a version string lower than 2.34 (e.g., `ldd (Ubuntu GLIBC 2.27-3ubuntu1) 2.27`), it conclusively proves that the customer's platform cannot satisfy the runtime dependency of the compiled binary.
-
-### Verification for Hypothesis 2
-Run the following command on the Jenkins build machine (or on the binary itself) to check what specific shared library versions the executable is hunting for:
-```bash
-objdump -p ./main | grep GLIBC_
-```
-
-* What the output tells me: This will spit out an explicit list of versioned symbols required by the binary. If I see a line explicitly naming `GLIBC_2.34`, it confirms the binary was linked against the newer host system runtime during compilation.
+2. **The pipeline binds `./main` to the SSH agent's forwarded socket or a shell environment variable that becomes invalid on disconnect (lower likelihood).**
+   The app may depend on an environment exported only within the SSH session (e.g. `SSH_AUTH_SOCK`), causing it to crash on the first I/O attempt after the session drops rather than on the signal itself.
 
 ---
 
-## The Fix
-To fix this minimally without introducing Docker or altering code, compile the binary on the Jenkins machine by forcing CGO to be disabled:
+## 2. Verification Steps
+
+**Hypothesis 1** — confirm SIGHUP is the killer:
+
 ```bash
-CGO_ENABLED=0 go build -o main main.go
+# On target, while the pipeline is running and ./main is up:
+ps -eo pid,ppid,pgid,sid,comm | grep main
+# If PGID == SID and both match the sshd child PID, the process is in the
+# SSH session's process group and will be HUP'd on logout.
 ```
 
-### Why this fixes it
-By default, the Go toolchain dynamically links to the host machine's `glibc` providers for tasks like DNS resolution or user lookup. By explicitly prefixing the compilation with `CGO_ENABLED=0`, we instruct the compiler to switch to Go's native, pure-Go network and OS implementations. The linker transitions from generating a dynamically linked binary that relies on an external `/lib64/ld-linux-x86-64.so.2` interpreter to spitting out a fully self-contained, statically linked binary. It completely eliminates runtime dependencies on any version of `glibc`, allowing the executable to run flawlessly on Ubuntu 18.04 or any other Linux kernel.
+Alternatively, check the last signal received right after the session drops:
+
+```bash
+# Immediately after a failed pipeline run:
+journalctl -xe | grep main
+# or
+dmesg | tail -20
+# A "killed by signal 1" line confirms SIGHUP as the cause.
+```
+
+**Hypothesis 2** — confirm an env-variable dependency:
+
+```bash
+# On target, run the app with a clean environment and observe whether it
+# survives a deliberate SSH disconnect:
+env -i HOME=/root PATH=/usr/local/bin:/usr/bin:/bin ./main &
+sleep 5 && curl localhost:4444
+# If it survives with a clean env but not the normal one, a session variable
+# is the culprit.
+```
 
 ---
 
-## Underlying Lesson
-Go binaries dynamically link to glibc by default, and glibc is forward- but not backward-compatible across versions. 
+## 3. Fix
+
+Add a `nohup` + output redirect to the pipeline's "Copy + run on target" shell step (no Docker, no restructuring required):
+
+```bash
+# In the Jenkins pipeline shell step that starts the app:
+ssh user@target "nohup /path/to/main > /var/log/main.log 2>&1 & echo \$! > /var/run/main.pid"
+```
+
+`nohup` ignores SIGHUP and closes stdin, `&` backgrounds the process, and the explicit `> ... 2>&1` redirect detaches it from the terminal's file descriptors. The PID file lets subsequent runs kill the previous instance cleanly before restarting:
+
+```bash
+ssh user@target "[ -f /var/run/main.pid ] && kill \$(cat /var/run/main.pid) 2>/dev/null; \
+  nohup /path/to/main > /var/log/main.log 2>&1 & echo \$! > /var/run/main.pid"
+```
+
+If `systemd` is available on `target`, a drop-in unit file is the more robust long-term alternative:
+
+```ini
+# /etc/systemd/system/main.service
+[Unit]
+Description=main API service
+
+[Service]
+ExecStart=/path/to/main
+Restart=on-failure
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl daemon-reload && systemctl enable --now main
+# Pipeline deploy step then becomes simply:
+# systemctl restart main
+```
+
+---
+
+## 4. Underlying Lesson
+
+"Process exists right now" only means the kernel has a PID entry for it at this instant; "process is supervised" means something (a init system, a process manager, or at minimum `nohup`/`disown`) guarantees the process is decoupled from any ephemeral session and will be restarted if it exits — two entirely different properties that green CI logs cannot distinguish between.
