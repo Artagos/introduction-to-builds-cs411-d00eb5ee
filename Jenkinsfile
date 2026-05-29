@@ -19,7 +19,7 @@ pipeline {
         stage('Deploy to docker VM') {
             agent { label 'docker' }
             steps {
-                withCredentials([sshUserPrivateKey(credentialsId: 'target_ssh', keyFileVariable: 'DOCKER_SSH_KEY')]) {
+                withCredentials([sshUserPrivateKey(credentialsId: 'target-ssh', keyFileVariable: 'DOCKER_SSH_KEY')]) {
                     sh '''
                         ssh -i $DOCKER_SSH_KEY -o StrictHostKeyChecking=no laborant@docker \
                             "docker pull ttl.sh/artagos:2h && \
