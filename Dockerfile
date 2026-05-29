@@ -1,11 +1,17 @@
-FROM golang:1.24
+# ---- Build stage ----
+FROM golang:1.24 AS builder
 
 WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
 
-COPY main.go .
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -o main .
 
-RUN go build -o app main.go
+# ---- Final stage ----
+FROM gcr.io/distroless/static-debian12
 
-EXPOSE 4444
+WORKDIR /app
+COPY --from=builder /app/main .
 
-CMD ["./app"]
+ENTRYPOINT ["/app/main"]
