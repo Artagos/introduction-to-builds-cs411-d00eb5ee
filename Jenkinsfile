@@ -21,7 +21,7 @@ pipeline {
             steps {
                 withCredentials([sshUserPrivateKey(credentialsId: 'target-ssh', keyFileVariable: 'DOCKER_SSH_KEY')]) {
                     sh '''
-                        ssh -i $DOCKER_SSH_KEY -o StrictHostKeyChecking=no laborant@docker \
+                        ssh -i $target-ssh -o StrictHostKeyChecking=no laborant@docker \
                             "docker pull ttl.sh/artagos:2h && \
                              docker stop go-server || true && \
                              docker rm go-server || true && \
