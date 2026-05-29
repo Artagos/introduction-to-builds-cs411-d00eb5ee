@@ -17,7 +17,6 @@ pipeline {
             }
         }
         stage('Deploy to docker VM') {
-            agent { label 'docker' }
             steps {
                 withCredentials([sshUserPrivateKey(credentialsId: 'target-ssh', keyFileVariable: 'DOCKER_SSH_KEY')]) {
                     sh '''
