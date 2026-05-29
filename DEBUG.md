@@ -1,44 +1,66 @@
-# Debugging GLIBC Version Mismatch
+# DEBUG.md
 
-## Hypotheses
-
-1. **Hypothesis 1 (Most Likely): Glibc backward-incompatibility.**
-   * **Reason:** The Jenkins build machine is running a modern Linux distribution featuring a newer version of `glibc` (specifically version 2.34 or higher), whereas the customer's older Ubuntu 18.04 VM only supplies `glibc` up to version 2.27. Because `glibc` guarantees forward-compatibility but explicitly lacks backward-compatibility for newer symbols, the binary fails to execute on the older system.
-2. **Hypothesis 2 (Less Likely): Rogue CGO dependency.**
-   * **Reason:** Even if the Go code itself doesn't explicitly import `"C"`, a native Go package in the dependency tree (such as `net` or `os/user`) might have automatically triggered CGO to fall back on host system libraries during the standard `go build` execution.
+## The error
+`exec /app/main: exec format error` — the container starts and dies immediately.
+This means the binary inside the image was compiled for a different CPU architecture
+than the host trying to run it.
 
 ---
 
-## Verification Steps
+## 1. Two ranked hypotheses
 
-### Verification for Hypothesis 1
-Run the following command on the **customer's Ubuntu 18.04 VM** to check the native version of `glibc` available on their system:
-```bash
-ldd --version
-```
+**Hypothesis 1 (most likely) — The image was built for ARM and pushed as a single-arch manifest**
+You built on Apple Silicon (ARM64) with a plain `docker build`, which produces an ARM64
+binary by default. The `docker` VM is x86_64 and cannot execute an ARM64 binary.
 
-* What the output tells me: If the output prints a version string lower than 2.34 (e.g., `ldd (Ubuntu GLIBC 2.27-3ubuntu1) 2.27`), it conclusively proves that the customer's platform cannot satisfy the runtime dependency of the compiled binary.
-
-### Verification for Hypothesis 2
-Run the following command on the Jenkins build machine (or on the binary itself) to check what specific shared library versions the executable is hunting for:
-```bash
-objdump -p ./main | grep GLIBC_
-```
-
-* What the output tells me: This will spit out an explicit list of versioned symbols required by the binary. If I see a line explicitly naming `GLIBC_2.34`, it confirms the binary was linked against the newer host system runtime during compilation.
+**Hypothesis 2 (less likely) — The Go binary was cross-compiled with the wrong GOARCH**
+`GOOS=linux` was set but `GOARCH` was left unset or explicitly set to `arm64`, so even
+if the image manifest looks multi-arch, the binary inside targets the wrong architecture.
 
 ---
 
-## The Fix
-To fix this minimally without introducing Docker or altering code, compile the binary on the Jenkins machine by forcing CGO to be disabled:
+## 2. Verification steps
+
+**For Hypothesis 1** — inspect the manifest architecture on the docker VM:
 ```bash
-CGO_ENABLED=0 go build -o main main.go
+docker inspect ttl.sh/artagos:2h --format='{{.Architecture}}'
+# Returns "arm64" → confirms you pushed an ARM-only image
 ```
 
-### Why this fixes it
-By default, the Go toolchain dynamically links to the host machine's `glibc` providers for tasks like DNS resolution or user lookup. By explicitly prefixing the compilation with `CGO_ENABLED=0`, we instruct the compiler to switch to Go's native, pure-Go network and OS implementations. The linker transitions from generating a dynamically linked binary that relies on an external `/lib64/ld-linux-x86-64.so.2` interpreter to spitting out a fully self-contained, statically linked binary. It completely eliminates runtime dependencies on any version of `glibc`, allowing the executable to run flawlessly on Ubuntu 18.04 or any other Linux kernel.
+**For Hypothesis 2** — check what the binary itself declares:
+```bash
+docker run --rm --entrypoint="" ttl.sh/artagos:2h file /app/app
+# Returns "ELF 64-bit LSB executable, ARM aarch64" → wrong arch binary
+# Should say "x86-64" for the docker VM to run it
+```
 
 ---
 
-## Underlying Lesson
-Go binaries dynamically link to glibc by default, and glibc is forward- but not backward-compatible across versions. 
+## 3. The fix
+
+Build a multi-arch image with `buildx` and push both ARM64 and AMD64 variants in a
+single manifest. The x86_64 VM will then automatically pull the right one:
+
+```bash
+# One-time setup: create a buildx builder that supports multi-arch
+docker buildx create --use --name multi-arch-builder
+
+# Build and push both architectures in one command
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t ttl.sh/artagos:2h \
+  --push \
+  .
+```
+
+Your Dockerfile already has `CGO_ENABLED=0 GOOS=linux` in the build stage — that's
+enough. `buildx` handles setting `GOARCH` correctly for each platform automatically
+via the build environment. No Dockerfile changes needed.
+
+---
+
+## 4. The underlying lesson
+
+"The image is built" only promises that the layers were assembled successfully on the
+build host — it says nothing about whether the binary inside is executable on the
+runtime host's CPU architecture.
