@@ -19,7 +19,7 @@ pipeline {
         stage('Deploy Kubernetes files') {
             steps {
                 withCredentials([string(credentialsId: 'kub', variable: 'TOKEN')]) {
-                    sh 'kubectl --server=https://kubernetes:6443 --insecure-skip-tls-verify=true --token=$TOKEN apply -f pod.yaml -f svc.yaml'
+                    sh 'kubectl --server=https://kubernetes:6443 --insecure-skip-tls-verify=true --token=$TOKEN apply -f pod.yaml'
                 }
             }
         }
