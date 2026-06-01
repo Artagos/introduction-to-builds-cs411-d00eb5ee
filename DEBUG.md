@@ -1,66 +1,69 @@
 # DEBUG.md
 
-## The error
-`exec /app/main: exec format error` — the container starts and dies immediately.
-This means the binary inside the image was compiled for a different CPU architecture
-than the host trying to run it.
+## ImagePullBackOff — Root Cause Analysis
 
 ---
 
-## 1. Two ranked hypotheses
+## Hypotheses (ranked by likelihood)
 
-**Hypothesis 1 (most likely) — The image was built for ARM and pushed as a single-arch manifest**
-You built on Apple Silicon (ARM64) with a plain `docker build`, which produces an ARM64
-binary by default. The `docker` VM is x86_64 and cannot execute an ARM64 binary.
+**1. The cluster nodes lack credentials to pull from `ttl.sh`**
 
-**Hypothesis 2 (less likely) — The Go binary was cross-compiled with the wrong GOARCH**
-`GOOS=linux` was set but `GOARCH` was left unset or explicitly set to `arm64`, so even
-if the image manifest looks multi-arch, the binary inside targets the wrong architecture.
+`ttl.sh` is a public registry, but the Pod is running in a cluster whose nodes (or service account) have no `imagePullSecret` configured, so the kubelet's pull attempt is rejected or rate-limited in a way that `docker pull` on the Jenkins machine — which may have cached credentials or a Docker login — does not trigger.
+
+**2. The image tag has already expired on `ttl.sh`**
+
+`ttl.sh` images expire after a short TTL (as short as 1–24 h); the pipeline pushed the image successfully and Jenkins can still pull it from a local cache or within the TTL window, but by the time the cluster tries to pull, the tag no longer exists on the registry.
 
 ---
 
-## 2. Verification steps
+## Verification steps
 
-**For Hypothesis 1** — inspect the manifest architecture on the docker VM:
+**Hypothesis 1 — missing pull credentials:**
 ```bash
-docker inspect ttl.sh/artagos:2h --format='{{.Architecture}}'
-# Returns "arm64" → confirms you pushed an ARM-only image
+kubectl describe pod <pod-name> | grep -A 10 "Events:"
 ```
+Look for `401 Unauthorized` or `no basic auth credentials` in the event log. If the error message references authentication rather than "not found", credentials are the problem.
 
-**For Hypothesis 2** — check what the binary itself declares:
+**Hypothesis 2 — expired / missing tag:**
 ```bash
-docker run --rm --entrypoint="" ttl.sh/artagos:2h file /app/app
-# Returns "ELF 64-bit LSB executable, ARM aarch64" → wrong arch binary
-# Should say "x86-64" for the docker VM to run it
+curl -s https://ttl.sh/v2/<your-image>/manifests/<your-tag> \
+  -o /dev/null -w "%{http_code}"
 ```
+A `404` or `401` response from the registry API confirms the tag is gone (or never landed). You can cross-check with `kubectl describe pod` looking for `manifest unknown` or `not found` in the pull error.
 
 ---
 
-## 3. The fix
+## Fix
 
-Build a multi-arch image with `buildx` and push both ARM64 and AMD64 variants in a
-single manifest. The x86_64 VM will then automatically pull the right one:
+**If hypothesis 1 (auth):** create an `imagePullSecret` pointing at `ttl.sh` and attach it to the Pod:
 
 ```bash
-# One-time setup: create a buildx builder that supports multi-arch
-docker buildx create --use --name multi-arch-builder
-
-# Build and push both architectures in one command
-docker buildx build \
-  --platform linux/amd64,linux/arm64 \
-  -t ttl.sh/artagos:2h \
-  --push \
-  .
+kubectl create secret docker-registry ttlsh-pull-secret \
+  --docker-server=ttl.sh \
+  --docker-username=<user> \
+  --docker-password=<token> \
+  --docker-email=<email>
 ```
 
-Your Dockerfile already has `CGO_ENABLED=0 GOOS=linux` in the build stage — that's
-enough. `buildx` handles setting `GOARCH` correctly for each platform automatically
-via the build environment. No Dockerfile changes needed.
+Then add to the Pod manifest (minimal diff — only the `imagePullSecrets` stanza):
+
+```yaml
+spec:
+  imagePullSecrets:
+    - name: ttlsh-pull-secret
+  containers:
+    - name: myapp
+      image: ttl.sh/<your-image>:<your-tag>
+```
+
+**If hypothesis 2 (expired tag):** re-run the pipeline to push a fresh image with a new tag (or a longer TTL), then patch the Pod to use the new tag:
+
+```bash
+kubectl set image pod/<pod-name> myapp=ttl.sh/<your-image>:<new-tag>
+```
 
 ---
 
-## 4. The underlying lesson
+## Underlying lesson
 
-"The image is built" only promises that the layers were assembled successfully on the
-build host — it says nothing about whether the binary inside is executable on the
-runtime host's CPU architecture.
+"I can pull this image" means *your* Docker client, with *your* credentials and cache, can reach the registry — but "the cluster can pull this image" means the **kubelet on each node** must be able to reach the same registry URL, authenticate with its own credentials (or an `imagePullSecret`), and find a tag that still exists at pull time; those are three independent conditions that your local environment silently satisfies but the cluster does not inherit.
