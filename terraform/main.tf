@@ -38,9 +38,9 @@ variable "public_key" {
 }
 
 variable "ssh_cidr_blocks" {
-  description = "CIDR ranges allowed to SSH to the instance. Replace the default with your laptop or Jenkins agent IP range."
+  description = "CIDR ranges allowed to SSH to the instance. Keep this narrowed to your laptop or Jenkins agent IP."
   type        = list(string)
-  default     = ["0.0.0.0/0"]
+  default     = ["23.98.142.184/32"]
 }
 
 variable "app_cidr_blocks" {
