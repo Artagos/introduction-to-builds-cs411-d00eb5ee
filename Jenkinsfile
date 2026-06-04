@@ -31,7 +31,7 @@ pipeline {
 
                             terraform import aws_key_pair.jenkins devopsmod-go-app-jenkins || true
 
-                            terraform apply -auto-approve -input=false
+                            terraform apply -auto-approve
                         '''
                         script {
                             env.INSTANCE_PUBLIC_IP = sh(
