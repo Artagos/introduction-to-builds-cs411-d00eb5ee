@@ -4,16 +4,7 @@ pipeline {
     stages {
         stage('Build') {
             steps {
-                script {
-                    sh 'docker build -t ttl.sh/artagos:2h .'
-                }
-            }
-        }
-        stage('Push') {
-            steps {
-                script {
-                    sh 'docker push ttl.sh/artagos:2h'
-                }
+                    sh "CGO_ENABLED=0 go build -o main main.go"
             }
         }
         stage('Deploy') {
