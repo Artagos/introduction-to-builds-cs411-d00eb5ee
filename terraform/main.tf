@@ -7,6 +7,15 @@ terraform {
       version = "~> 5.0"
     }
   }
+
+  backend "s3" {
+    bucket       = "cs411-tfstate"
+    key          = "cs411/terraform.tfstate"
+    region       = "eu-west-3"
+    encrypt      = true
+    use_lockfile = true
+  }
+
 }
 
 provider "aws" {
