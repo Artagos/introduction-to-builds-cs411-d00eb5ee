@@ -84,6 +84,10 @@ resource "aws_key_pair" "jenkins" {
   key_name   = "${var.instance_name}-jenkins"
   public_key = var.public_key
 
+  lifecycle {
+    ignore_changes = [public_key]
+  }
+
   tags = {
     Name = "${var.instance_name}-jenkins"
   }
