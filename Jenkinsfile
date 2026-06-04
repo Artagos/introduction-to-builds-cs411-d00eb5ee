@@ -20,10 +20,10 @@ pipeline {
                         credentialsId: 'ssh-key',
                         keyFileVariable: 'KEY',
                         usernameVariable: 'SSH_USER'),
-                    [$class: 'AmazonWebServicesCredentialsBinding',
+                    usernamePassword(
                         credentialsId: 'aws-credentials',
-                        accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                        secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
                     dir('terraform') {
                         sh '''
                             export TF_VAR_public_key="$(ssh-keygen -y -f "$KEY")"
