@@ -31,19 +31,6 @@ pipeline {
 
                             terraform import aws_key_pair.jenkins devopsmod-go-app-jenkins || true
 
-                            DEFAULT_VPC_ID="$(aws ec2 describe-vpcs \
-                                --filters Name=is-default,Values=true \
-                                --query 'Vpcs[0].VpcId' \
-                                --output text)"
-                            SG_ID="$(aws ec2 describe-security-groups \
-                                --filters Name=group-name,Values=devopsmod-go-app-sg Name=vpc-id,Values="$DEFAULT_VPC_ID" \
-                                --query 'SecurityGroups[0].GroupId' \
-                                --output text)"
-
-                            if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
-                                terraform import aws_security_group.app "$SG_ID" || true
-                            fi
-
                             terraform apply -auto-approve -input=false
                         '''
                         script {

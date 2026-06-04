@@ -94,7 +94,7 @@ resource "aws_key_pair" "jenkins" {
 }
 
 resource "aws_security_group" "app" {
-  name        = "${var.instance_name}-sg"
+  name_prefix = "${var.instance_name}-sg-"
   description = "Allow Jenkins SSH deploys and HTTP traffic to the Go app"
   vpc_id      = data.aws_vpc.selected.id
 
