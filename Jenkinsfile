@@ -16,9 +16,9 @@ pipeline {
                         credentialsId: 'ssh-key',
                         keyFileVariable: 'KEY',
                         usernameVariable: 'SSH_USER')]) {
-                    sh 'scp -i "$KEY" -o StrictHostKeyChecking=no myapp.service cloud-devops@16.171.17.244:/tmp/myapp.service'
-                    sh 'scp -i "$KEY" -o StrictHostKeyChecking=no main cloud-devops@16.171.17.244:/tmp/main'
-                    sh '''ssh -i "$KEY" -o StrictHostKeyChecking=no cloud-devops@16.171.17.244 "
+                    sh 'scp -i "$KEY" -o StrictHostKeyChecking=no myapp.service ec2-user@16.171.17.244:/tmp/myapp.service'
+                    sh 'scp -i "$KEY" -o StrictHostKeyChecking=no main ec2-user@16.171.17.244:/tmp/main'
+                    sh '''ssh -i "$KEY" -o StrictHostKeyChecking=no ec2-user@16.171.17.244 "
                         sudo cp /tmp/main /usr/local/bin/myapp
                         sudo chmod +x /usr/local/bin/myapp
                         sudo cp /tmp/myapp.service /etc/systemd/system/myapp.service
