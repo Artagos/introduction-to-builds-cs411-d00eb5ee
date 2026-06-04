@@ -1,69 +1,46 @@
 # DEBUG.md
 
-## ImagePullBackOff — Root Cause Analysis
-
----
-
 ## Hypotheses (ranked by likelihood)
 
-**1. The cluster nodes lack credentials to pull from `ttl.sh`**
+1. **Security Group missing inbound rule for port 4444** — The EC2 Security Group has no rule permitting TCP 4444 from `0.0.0.0/0`, so AWS silently drops the packet before it reaches the instance, producing an indefinite hang rather than a refused connection.
 
-`ttl.sh` is a public registry, but the Pod is running in a cluster whose nodes (or service account) have no `imagePullSecret` configured, so the kubelet's pull attempt is rejected or rate-limited in a way that `docker pull` on the Jenkins machine — which may have cached credentials or a Docker login — does not trigger.
-
-**2. The image tag has already expired on `ttl.sh`**
-
-`ttl.sh` images expire after a short TTL (as short as 1–24 h); the pipeline pushed the image successfully and Jenkins can still pull it from a local cache or within the TTL window, but by the time the cluster tries to pull, the tag no longer exists on the registry.
+2. **Application bound to loopback (127.0.0.1) only** — The app is listening exclusively on the loopback interface; traffic arriving on the public NIC finds no socket to hand off to, and the connection stalls without an RST.
 
 ---
 
-## Verification steps
+## Verification Steps
 
-**Hypothesis 1 — missing pull credentials:**
-```bash
-kubectl describe pod <pod-name> | grep -A 10 "Events:"
-```
-Look for `401 Unauthorized` or `no basic auth credentials` in the event log. If the error message references authentication rather than "not found", credentials are the problem.
+1. **Security Group** — Check inbound rules via CLI:
+   ```bash
+   aws ec2 describe-security-groups \
+     --group-ids <sg-id> \
+     --query 'SecurityGroups[].IpPermissions'
+   ```
+   Or in the Console: EC2 → Security Groups → Inbound rules. A missing TCP/4444 entry confirms hypothesis 1.
 
-**Hypothesis 2 — expired / missing tag:**
-```bash
-curl -s https://ttl.sh/v2/<your-image>/manifests/<your-tag> \
-  -o /dev/null -w "%{http_code}"
-```
-A `404` or `401` response from the registry API confirms the tag is gone (or never landed). You can cross-check with `kubectl describe pod` looking for `manifest unknown` or `not found` in the pull error.
+2. **Listen address** — SSH into the instance and run:
+   ```bash
+   ss -tlnp | grep 4444
+   ```
+   If the output shows `127.0.0.1:4444` instead of `0.0.0.0:4444` or `*:4444`, hypothesis 2 is confirmed.
 
 ---
 
 ## Fix
 
-**If hypothesis 1 (auth):** create an `imagePullSecret` pointing at `ttl.sh` and attach it to the Pod:
-
+**Hypothesis 1 (most likely fix):** Add an inbound SG rule — no Terraform rewrite needed:
 ```bash
-kubectl create secret docker-registry ttlsh-pull-secret \
-  --docker-server=ttl.sh \
-  --docker-username=<user> \
-  --docker-password=<token> \
-  --docker-email=<email>
+aws ec2 authorize-security-group-ingress \
+  --group-id <sg-id> \
+  --protocol tcp \
+  --port 4444 \
+  --cidr 0.0.0.0/0
 ```
 
-Then add to the Pod manifest (minimal diff — only the `imagePullSecrets` stanza):
-
-```yaml
-spec:
-  imagePullSecrets:
-    - name: ttlsh-pull-secret
-  containers:
-    - name: myapp
-      image: ttl.sh/<your-image>:<your-tag>
-```
-
-**If hypothesis 2 (expired tag):** re-run the pipeline to push a fresh image with a new tag (or a longer TTL), then patch the Pod to use the new tag:
-
-```bash
-kubectl set image pod/<pod-name> myapp=ttl.sh/<your-image>:<new-tag>
-```
+**Hypothesis 2 fix:** Change the app's bind address from `127.0.0.1` to `0.0.0.0` in its config or start command (e.g. `--host 0.0.0.0`), then restart the process.
 
 ---
 
-## Underlying lesson
+## Underlying Lesson
 
-"I can pull this image" means *your* Docker client, with *your* credentials and cache, can reach the registry — but "the cluster can pull this image" means the **kubelet on each node** must be able to reach the same registry URL, authenticate with its own credentials (or an `imagePullSecret`), and find a tag that still exists at pull time; those are three independent conditions that your local environment silently satisfies but the cluster does not inherit.
+A **dropped** packet (SG/firewall silently discards it) leaves the sender with no reply, so the connection hangs until timeout; a packet that **reaches a closed port** gets an immediate TCP RST from the OS, which the client surfaces as "connection refused" — the failure mode reveals exactly where in the stack the packet died.
