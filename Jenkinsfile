@@ -27,7 +27,7 @@ pipeline {
                     dir('terraform') {
                         sh '''
                             export TF_VAR_public_key="$(ssh-keygen -y -f "$KEY")"
-                            terraform init -input=false -migrate-state
+                            terraform init -input=false -reconfigure
 
                             terraform import aws_key_pair.jenkins devopsmod-go-app-jenkins || true
 
