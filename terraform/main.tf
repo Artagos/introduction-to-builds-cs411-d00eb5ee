@@ -15,7 +15,6 @@ terraform {
     encrypt      = true
     use_lockfile = true
   }
-
 }
 
 provider "aws" {

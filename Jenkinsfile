@@ -6,7 +6,6 @@ pipeline {
     environment {
         AWS_DEFAULT_REGION = 'eu-north-1'
         TF_IN_AUTOMATION = 'true'
-        DEPLOY_HOST_IP = '16.170.215.199'
     }
 
     stages {
@@ -35,7 +34,10 @@ pipeline {
                             terraform apply -auto-approve -input=false
                         '''
                         script {
-                            env.INSTANCE_PUBLIC_IP = env.DEPLOY_HOST_IP
+                            env.INSTANCE_PUBLIC_IP = sh(
+                                script: 'terraform output -raw instance_public_ip',
+                                returnStdout: true
+                            ).trim()
                         }
                     }
                 }
