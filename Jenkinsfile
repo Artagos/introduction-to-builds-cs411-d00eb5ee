@@ -27,11 +27,11 @@ pipeline {
                     dir('terraform') {
                         sh '''
                             export TF_VAR_public_key="$(ssh-keygen -y -f "$KEY")"
-                            terraform init -input=false
+                            terraform init
 
                             terraform import aws_key_pair.jenkins devopsmod-go-app-jenkins || true
 
-                            terraform apply -auto-approve
+                            terraform apply -auto-approve -input=false
                         '''
                         script {
                             env.INSTANCE_PUBLIC_IP = sh(
